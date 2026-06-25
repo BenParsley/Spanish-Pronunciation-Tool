@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Spanish Pronunciation",
+  "version": "4.0.0",
+  "description": "Right-click any highlighted text to hear it pronounced in Spanish.",
+  "permissions": ["contextMenus", "tts", "scripting", "activeTab", "storage"],
+  "host_permissions": ["https://translate.googleapis.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Spanish Pronunciation",
+    "default_popup": "popup.html"
+  }
+}
