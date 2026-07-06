@@ -1,12 +1,11 @@
-# Spanish Pronunciation & Translation Extension
+# Spanish Live Translation Extension
 
-A simple Chrome Extension to hear Spanish pronunciations and translate text.
+A simple Chrome Extension to translate text using a live floating panel.
 
 ## Features
 
-- **Pronounce**: Highlight text, right-click, and select **"Pronounce in Spanish"**.
-- **Translate**: Highlight text, right-click, and select **"Translate Selection"** to open a floating translation panel.
-- **Customize**: Click the extension icon to adjust TTS volume, speed, and voice gender preference.
+- **Live Translation**: Highlight text, right-click, and select **"Live Translation"**.
+- **Info Popup**: Click the extension icon for a quick overview of how to use it.
 
 ## Installation
 
