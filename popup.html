@@ -3,36 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Spanish Pronunciation</title>
+    <title>Spanish Live Translation</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
     <main class="card">
-      <h1>Spanish Pronunciation</h1>
-      <p class="hint">Adjust how Spanish TTS sounds.</p>
-
-      <label class="field-label" for="volumeRange">Volume</label>
-      <div class="volume-row">
-        <input id="volumeRange" type="range" min="0" max="100" step="1" />
-        <span id="volumeValue" class="value">100%</span>
-      </div>
-
-      <label class="field-label" for="speedRange">Speed</label>
-      <div class="volume-row">
-        <input id="speedRange" type="range" min="0" max="3" step="1" />
-        <span id="speedValue" class="value">Normal</span>
-      </div>
-
-      <fieldset class="gender-group">
-        <legend class="field-label">Voice preference</legend>
-        <label><input type="radio" name="genderMode" value="both" checked /> Both (default)</label>
-        <label><input type="radio" name="genderMode" value="male" /> Male</label>
-        <label><input type="radio" name="genderMode" value="female" /> Female</label>
-      </fieldset>
-
-      <p id="status" class="status" aria-live="polite"></p>
+      <h1>Spanish Live Translation</h1>
+      <p class="hint">Highlight text and right-click to translate it instantly.</p>
+      <p>This extension provides live translation via the context menu.</p>
+      <p>Use the <strong>Live Translation</strong> menu item after selecting text on a page.</p>
     </main>
-
-    <script src="popup.js"></script>
   </body>
 </html>
