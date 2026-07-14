@@ -1,6 +1,6 @@
-# Spanish Live Translation Extension
+# Spanish-Pronunciation-Tool
 
-A premium Chrome Extension that provides instant Spanish → English translation via a floating panel with audio playback.
+A Chrome Extension that provides instant Spanish → English translation via a floating panel with audio playback.
 
 ![Example Screenshot](example.png)
 
