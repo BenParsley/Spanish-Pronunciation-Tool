@@ -1,41 +1,201 @@
+/**
+ * Spanish Live Translation — Content Script
+ *
+ * Injects a floating translation panel into host pages using Shadow DOM
+ * isolation. Highlighted Spanish text is translated to English in real-time
+ * and can be read aloud via the Web Speech API.
+ *
+ * @file content.js
+ */
+
 if (window.__spTranslatorLoaded) {
   // Avoid duplicate listeners when background reinjects this script.
 } else {
   window.__spTranslatorLoaded = true;
 
+/* ============================================================
+   Constants
+   ============================================================ */
+
 const PANEL_ID = "sp-translate-panel";
+const HOST_ID = "sp-translate-host";
 
-const WINDOW_SIZE_PRESETS = {
-  thin: { width: "360px", height: "260px" },
-  wide: { width: "640px", height: "320px" },
-};
+/* ============================================================
+   Icons & UI Constants
+   ============================================================ */
 
+const ICON_PLAY = `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`;
+const ICON_PAUSE = `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
+const ICON_REPLAY = `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>`;
+
+function setPlayState(btn, state) {
+  if (!btn) return;
+  btn.dataset.state = state;
+  if (state === "play") btn.innerHTML = ICON_PLAY;
+  if (state === "pause") btn.innerHTML = ICON_PAUSE;
+  if (state === "replay") btn.innerHTML = ICON_REPLAY;
+}
+
+/* ============================================================
+   Speech & Playback State
+   ============================================================ */
+
+/** @type {number} Current speech rate (0.2–1.0). */
 let currentSpeechRate = 1;
-let currentVolume = 1;
-let blurEnabled = false;
-let currentUtterance = null;
-let currentSpeechText = "";
-let currentSpeechCharIndex = 0;
-let currentSpeechDuration = 0;
-let currentSpeechStartTime = 0;
-let currentSpeechTimer = null;
-let progressBarActive = false;
-let playToggleBtn = null;
-let progressBar = null;
-let progressSegments = null;
-let progressFill = null;
-let progressDot = null;
-let progressTime = null;
-let speedInput = null;
-let speedValue = null;
-let volumeInput = null;
-let volumeValue = null;
-let smoothnessInput = null;
-let smoothnessValue = null;
-let currentProgressSmoothness = 10;
-let output = null;
 
-function getSelectionAnchor(panel) {
+/** @type {number} Current volume (0–1). */
+let currentVolume = 1;
+
+/** @type {boolean} Whether the English output is blurred. */
+let blurEnabled = true;
+
+/** @type {SpeechSynthesisUtterance|null} Active utterance reference. */
+let currentUtterance = null;
+
+/** @type {string} Full text being spoken. */
+let currentSpeechText = "";
+
+/** @type {number} Character index the playback has reached. */
+let currentSpeechCharIndex = 0;
+
+/** @type {number} Estimated total duration of the current utterance (seconds). */
+let currentSpeechDuration = 0;
+
+/** @type {number} Timestamp (ms) when playback started/resumed. */
+let currentSpeechStartTime = 0;
+
+/** @type {number|null} requestAnimationFrame handle for progress updates. */
+let currentSpeechTimer = null;
+
+/** @type {boolean} Whether the progress bar animation loop is running. */
+let progressBarActive = false;
+
+/** @type {number} Number of visual segments in the progress bar. */
+let currentProgressSmoothness = 10;
+
+/** @type {boolean} Whether audio should auto-play on open. */
+let currentAutoPlay = true;
+
+/** @type {string} Current theme accent color. */
+let currentThemeColor = "#961414";
+/** @type {string} Computed dark shade for gradients. */
+let currentThemeColorDark = darkenHex("#961414", 15);
+
+/** Helper to darken a hex color by a percentage (0-100) */
+function darkenHex(hex, percent) {
+  hex = hex.replace(/^\s*#|\s*$/g, '');
+  if (hex.length === 3) hex = hex.replace(/(.)/g, '$1$1');
+  let r = parseInt(hex.substr(0, 2), 16),
+      g = parseInt(hex.substr(2, 2), 16),
+      b = parseInt(hex.substr(4, 2), 16);
+  r = Math.floor(r * (100 - percent) / 100);
+  g = Math.floor(g * (100 - percent) / 100);
+  b = Math.floor(b * (100 - percent) / 100);
+  return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+}
+
+function hexToRgba(hex, alpha) {
+  hex = hex.replace(/^\s*#|\s*$/g, '');
+  if (hex.length === 3) hex = hex.replace(/(.)/g, '$1$1');
+  let r = parseInt(hex.substr(0, 2), 16),
+      g = parseInt(hex.substr(2, 2), 16),
+      b = parseInt(hex.substr(4, 2), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function applyThemeColorToPanel() {
+  if (shadowRoot) {
+    const panelEl = shadowRoot.getElementById(PANEL_ID);
+    if (panelEl) {
+      panelEl.style.setProperty("--sp-accent", currentThemeColor);
+      panelEl.style.setProperty("--sp-accent-dark", currentThemeColorDark);
+      panelEl.style.setProperty("--sp-accent-hover", currentThemeColorDark);
+      panelEl.style.setProperty("--sp-accent-glow", hexToRgba(currentThemeColor, 0.35));
+    }
+  }
+}
+
+// Sync audio settings from extension popup
+chrome.storage.local.get(["speechRate", "speechVolume", "autoPlay", "themeColor"], (res) => {
+  if (res.speechRate !== undefined) currentSpeechRate = res.speechRate;
+  if (res.speechVolume !== undefined) currentVolume = res.speechVolume;
+  if (res.autoPlay !== undefined) currentAutoPlay = res.autoPlay;
+  if (res.themeColor) {
+    currentThemeColor = res.themeColor;
+    currentThemeColorDark = darkenHex(currentThemeColor, 15);
+  }
+});
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local") {
+    if (changes.speechRate) currentSpeechRate = changes.speechRate.newValue;
+    if (changes.speechVolume) currentVolume = changes.speechVolume.newValue;
+    if (changes.autoPlay) currentAutoPlay = changes.autoPlay.newValue;
+    if (changes.themeColor) {
+      currentThemeColor = changes.themeColor.newValue;
+      currentThemeColorDark = darkenHex(currentThemeColor, 15);
+      applyThemeColorToPanel();
+    }
+    
+    // If speaking, restart to apply new audio settings
+    if (typeof window.speechSynthesis !== "undefined" && window.speechSynthesis.speaking &&
+        (changes.speechRate || changes.speechVolume)) {
+      if (shadowRoot) {
+        const input = shadowRoot.querySelector("#sp-input");
+        const text = input?.textContent.trim() || "";
+        window.speechSynthesis.cancel();
+        if (text) {
+          // Restart playback from current position
+          speakText(text, currentSpeechCharIndex);
+        }
+      }
+    }
+  }
+});
+
+/* ============================================================
+   Cached DOM References (set when panel is created)
+   ============================================================ */
+
+/** @type {HTMLButtonElement|null} */
+let playToggleBtn = null;
+/** @type {HTMLDivElement|null} */
+let progressBar = null;
+/** @type {HTMLDivElement|null} */
+let progressSegments = null;
+/** @type {HTMLDivElement|null} */
+let progressFill = null;
+/** @type {HTMLDivElement|null} */
+let progressDot = null;
+/** @type {HTMLSpanElement|null} */
+let progressTime = null;
+/** @type {HTMLInputElement|null} */
+let speedInput = null;
+/** @type {HTMLSpanElement|null} */
+let speedValue = null;
+/** @type {HTMLInputElement|null} */
+let volumeInput = null;
+/** @type {HTMLSpanElement|null} */
+let volumeValue = null;
+/** @type {HTMLInputElement|null} */
+let smoothnessInput = null;
+/** @type {HTMLSpanElement|null} */
+let smoothnessValue = null;
+/** @type {HTMLDivElement|null} */
+let outputEl = null;
+/** @type {ShadowRoot|null} */
+let shadowRoot = null;
+
+/* ============================================================
+   Utility Functions
+   ============================================================ */
+
+/**
+ * Computes an ideal screen position for the panel near the user's
+ * current text selection.
+ * @returns {{ x: number, y: number }} Absolute page coordinates.
+ */
+function getSelectionAnchor() {
   const selection = window.getSelection();
   if (!selection || selection.rangeCount === 0) {
     return { x: 20, y: 20 };
@@ -52,30 +212,115 @@ function getSelectionAnchor(panel) {
   return { x, y };
 }
 
+/**
+ * Finds the best available Spanish voice for speech synthesis.
+ * @returns {SpeechSynthesisVoice|null}
+ */
 function getSpanishVoice() {
   const voices = window.speechSynthesis.getVoices();
   return (
-    voices.find((voice) => voice.lang.toLowerCase().startsWith("es")) ||
-    voices.find((voice) => voice.name.toLowerCase().includes("spanish")) ||
-    voices.find((voice) => voice.name.toLowerCase().includes("es")) ||
+    voices.find((v) => v.lang.toLowerCase().startsWith("es")) ||
+    voices.find((v) => v.name.toLowerCase().includes("spanish")) ||
+    voices.find((v) => v.name.toLowerCase().includes("es")) ||
     null
   );
 }
 
+/**
+ * Pads a number to two digits.
+ * @param {number} value
+ * @returns {string}
+ */
+function pad(value) {
+  return String(value).padStart(2, "0");
+}
+
+/* ============================================================
+   Progress Bar Engine
+   ============================================================ */
+
+/** Updates the visual state of the progress bar, scrub dot, and time display. */
 function updateProgressDisplay() {
   if (!progressFill || !progressDot || !progressTime) return;
+
   const textLength = currentSpeechText.length || 1;
-  const percent = currentSpeechDuration ? Math.min(100, Math.max(0, (currentSpeechCharIndex / textLength) * 100)) : 0;
+  const percent = currentSpeechDuration
+    ? Math.min(100, Math.max(0, (currentSpeechCharIndex / textLength) * 100))
+    : 0;
+
   progressFill.style.width = `${percent}%`;
   progressDot.style.left = `${percent}%`;
+
   const elapsedSeconds = Math.floor((currentSpeechDuration || 0) * (percent / 100));
   const totalSeconds = Math.floor(currentSpeechDuration || 0);
-  const pad = (value) => String(value).padStart(2, "0");
-  if (progressTime) {
-    progressTime.textContent = `${Math.floor(elapsedSeconds / 60)}:${pad(elapsedSeconds % 60)} / ${Math.floor(totalSeconds / 60)}:${pad(totalSeconds % 60)}`;
+
+  progressTime.textContent =
+    `${Math.floor(elapsedSeconds / 60)}:${pad(elapsedSeconds % 60)} / ` +
+    `${Math.floor(totalSeconds / 60)}:${pad(totalSeconds % 60)}`;
+
+  // Highlight predicted spoken word (sliding line)
+  if (shadowRoot) {
+    const input = shadowRoot.querySelector("#sp-input");
+    if (input) {
+      const words = input.querySelectorAll(".sp-word");
+      const predictLine = input.querySelector("#sp-predict-line");
+      
+      if (progressBarActive && percent < 100 && predictLine) {
+        let activeIndex = -1;
+        for (let i = 0; i < words.length; i++) {
+          const start = parseInt(words[i].dataset.start, 10);
+          const end = parseInt(words[i].dataset.end, 10);
+          if (currentSpeechCharIndex >= start && currentSpeechCharIndex <= end) {
+            activeIndex = i;
+            break;
+          }
+        }
+        if (activeIndex === -1) {
+          for (let i = 0; i < words.length; i++) {
+            const start = parseInt(words[i].dataset.start, 10);
+            if (currentSpeechCharIndex < start) {
+              activeIndex = i;
+              break;
+            }
+          }
+        }
+
+        if (activeIndex !== -1) {
+          let startIndex = Math.max(0, activeIndex - 1);
+          let endIndex = Math.min(words.length - 1, activeIndex + 1);
+          
+          const activeWord = words[activeIndex];
+          while (startIndex < activeIndex && words[startIndex].offsetTop !== activeWord.offsetTop) {
+            startIndex++;
+          }
+          while (endIndex > activeIndex && words[endIndex].offsetTop !== activeWord.offsetTop) {
+            endIndex--;
+          }
+          
+          const startWord = words[startIndex];
+          const endWord = words[endIndex];
+          
+          const left = startWord.offsetLeft;
+          const width = (endWord.offsetLeft + endWord.offsetWidth) - left;
+          const top = activeWord.offsetTop + activeWord.offsetHeight;
+          
+          predictLine.style.transform = `translate(${left}px, ${top}px)`;
+          predictLine.style.width = `${width}px`;
+          predictLine.style.opacity = "1";
+        } else {
+          predictLine.style.opacity = "0";
+        }
+      } else if (predictLine) {
+        predictLine.style.opacity = "0";
+      }
+    }
   }
 }
 
+/**
+ * Starts the requestAnimationFrame loop that drives the progress bar.
+ * Automatically stops itself when playback reaches 100%.
+ */
 function startProgressTimer() {
   stopProgressTimer();
   if (!currentSpeechStartTime) {
@@ -84,6 +329,7 @@ function startProgressTimer() {
 
   const tick = () => {
     if (!currentSpeechDuration || !currentSpeechText) return;
+
     const elapsed = (Date.now() - currentSpeechStartTime) / 1000;
     const percent = Math.min(1, Math.max(0, elapsed / currentSpeechDuration));
     currentSpeechCharIndex = Math.round(currentSpeechText.length * percent);
@@ -92,7 +338,8 @@ function startProgressTimer() {
     if (percent >= 1) {
       currentSpeechTimer = null;
       progressBarActive = false;
-      if (playToggleBtn) playToggleBtn.textContent = "►";
+      if (playToggleBtn) setPlayState(playToggleBtn, "replay");
+      if (progressDot) progressDot.classList.remove("sp-active");
       return;
     }
 
@@ -102,6 +349,7 @@ function startProgressTimer() {
   currentSpeechTimer = window.requestAnimationFrame(tick);
 }
 
+/** Cancels the progress animation loop. */
 function stopProgressTimer() {
   if (currentSpeechTimer !== null) {
     window.cancelAnimationFrame(currentSpeechTimer);
@@ -109,244 +357,257 @@ function stopProgressTimer() {
   }
 }
 
+/** Recalculates the current progress position from wall-clock time. */
 function refreshProgressPosition() {
   if (!currentSpeechDuration || !currentSpeechText) return;
+
   const elapsed = (Date.now() - currentSpeechStartTime) / 1000;
   const percent = Math.min(1, Math.max(0, elapsed / currentSpeechDuration));
   currentSpeechCharIndex = Math.round(currentSpeechText.length * percent);
   updateProgressDisplay();
 }
 
+/**
+ * Rebuilds the decorative segment dividers inside the progress bar.
+ * @param {number} segmentCount Number of segments (1–20).
+ */
 function rebuildProgressSegments(segmentCount) {
   if (!progressSegments) return;
+
   progressSegments.innerHTML = "";
-  const clampedCount = Math.max(1, Math.min(20, segmentCount));
-  const segmentWidth = 100 / clampedCount;
-  for (let i = 0; i < clampedCount; i += 1) {
-    const segment = document.createElement("div");
-    segment.style.width = `${segmentWidth}%`;
-    segment.style.height = "100%";
-    segment.style.background = "rgba(255,255,255,0.08)";
-    segment.style.borderRight = i < clampedCount - 1 ? "1px solid rgba(255,255,255,0.08)" : "none";
-    progressSegments.appendChild(segment);
+  const clamped = Math.max(1, Math.min(10, segmentCount));
+  progressSegments.style.gridTemplateColumns = `repeat(${clamped}, 1fr)`;
+
+  for (let i = 0; i < clamped; i++) {
+    const seg = document.createElement("div");
+    seg.className = "sp-progress-segment";
+    progressSegments.appendChild(seg);
   }
 }
 
+/**
+ * Seeks the progress bar to the position the user clicked.
+ * Stops active speech so the user must press play to resume.
+ * @param {PointerEvent|MouseEvent} clickEvent
+ */
 function seekProgress(clickEvent) {
   if (!progressBar || !currentSpeechText) return;
+
   const rect = progressBar.getBoundingClientRect();
   const clickX = Math.min(rect.width, Math.max(0, clickEvent.clientX - rect.left));
   const percent = rect.width ? clickX / rect.width : 0;
   const textLength = currentSpeechText.length;
+
   currentSpeechCharIndex = Math.round(textLength * percent);
-  currentSpeechStartTime = Date.now() - (currentSpeechDuration * (currentSpeechCharIndex / Math.max(1, textLength)) * 1000);
+  currentSpeechStartTime =
+    Date.now() - currentSpeechDuration * (currentSpeechCharIndex / Math.max(1, textLength)) * 1000;
   updateProgressDisplay();
 
   if (typeof window.speechSynthesis !== "undefined" && window.speechSynthesis.speaking) {
     window.speechSynthesis.cancel();
     stopProgressTimer();
     progressBarActive = false;
-    if (playToggleBtn) playToggleBtn.textContent = "►";
+    if (playToggleBtn) setPlayState(playToggleBtn, "play");
+    if (progressDot) progressDot.classList.remove("sp-active");
   }
 }
 
-function ensurePanel() {
-  let panel = document.getElementById(PANEL_ID);
-  if (panel) {
-    return panel;
+/** Resets all progress state. Called when new text is loaded. */
+function resetProgress(text = "") {
+  stopProgressTimer();
+  if (typeof window.speechSynthesis !== "undefined" && window.speechSynthesis.speaking) {
+    window.speechSynthesis.cancel();
   }
 
-  panel = document.createElement("div");
-  panel.id = PANEL_ID;
-  panel.style.position = "absolute";
-  panel.style.zIndex = "2147483647";
-  panel.style.width = "min(500px, calc(100vw - 24px))";
-  panel.style.maxWidth = "calc(100vw - 24px)";
-  panel.style.minWidth = "320px";
-  panel.style.minHeight = "220px";
-  panel.style.maxHeight = "calc(100vh - 24px)";
-  panel.style.background = "#fffdf9";
-  panel.style.border = "1px solid #e8dccd";
-  panel.style.borderRadius = "18px";
-  panel.style.boxShadow = "0 14px 36px rgba(20, 16, 8, 0.22)";
-  panel.style.padding = "14px 14px 94px";
-  panel.style.fontFamily = "Segoe UI, Tahoma, sans-serif";
-  panel.style.color = "#2a2117";
-  panel.style.boxSizing = "border-box";
-  panel.style.resize = "both";
-  panel.style.overflow = "hidden";
-  panel.dataset.autoSpeak = "false";
+  currentSpeechText = text;
+  currentSpeechCharIndex = 0;
+  currentSpeechDuration = text ? Math.max(1, text.length / 15) : 0;
+  currentSpeechStartTime = 0;
+  currentUtterance = null;
+  progressBarActive = false;
 
-  panel.innerHTML = `
-    <div id="sp-header" style="position:relative; display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; cursor:move; user-select:none;">
-      <strong style="font-size:15px;">Live Translation</strong>
-      <div style="display:flex; gap:8px; align-items:center;">
-        <button id="sp-settings-btn" style="border:none; background:transparent; color:#2a2117; font-size:18px; cursor:pointer; line-height:1;">⚙</button>
-        <button id="sp-close-btn" style="border:none; background:transparent; color:#2a2117; font-size:18px; cursor:pointer; line-height:1;">×</button>
+  if (playToggleBtn) setPlayState(playToggleBtn, "play");
+  if (progressDot) progressDot.classList.remove("sp-active");
+  updateProgressDisplay();
+}
+
+/* ============================================================
+   Speech Synthesis
+   ============================================================ */
+
+/**
+ * Speaks the given text aloud in Spanish, optionally resuming from
+ * a character offset.
+ * @param {string} text  Full text to speak.
+ * @param {number} [startIndex=0] Character index to resume from.
+ */
+function speakText(text, startIndex = 0) {
+  if (!text || typeof window.speechSynthesis === "undefined") return;
+
+  currentSpeechText = text;
+  currentSpeechCharIndex = Math.min(text.length, Math.max(0, startIndex));
+  currentSpeechDuration = Math.max(1, text.length / 15);
+
+  // Align start time so the progress bar matches the resume position.
+  currentSpeechStartTime =
+    Date.now() - currentSpeechDuration * (currentSpeechCharIndex / Math.max(1, text.length)) * 1000;
+
+  updateProgressDisplay();
+
+  if (currentUtterance) {
+    window.speechSynthesis.cancel();
+  }
+  stopProgressTimer();
+
+  const utterance = new SpeechSynthesisUtterance(text.slice(currentSpeechCharIndex));
+  utterance.lang = "es-ES";
+
+  const spanishVoice = getSpanishVoice();
+  if (spanishVoice) utterance.voice = spanishVoice;
+
+  utterance.rate = currentSpeechRate;
+  utterance.volume = currentVolume;
+
+  utterance.onend = () => {
+    currentUtterance = null;
+    stopProgressTimer();
+    progressBarActive = false;
+    currentSpeechCharIndex = currentSpeechText.length;
+    updateProgressDisplay();
+    if (playToggleBtn) playToggleBtn.textContent = "↻";
+    if (progressDot) progressDot.classList.remove("sp-active");
+  };
+
+  currentUtterance = utterance;
+  progressBarActive = true;
+  if (progressDot) progressDot.classList.add("sp-active");
+  window.speechSynthesis.speak(utterance);
+  startProgressTimer();
+}
+
+/* ============================================================
+   Panel HTML Template
+   ============================================================ */
+
+/**
+ * Returns the panel's inner HTML using CSS class names instead of
+ * inline styles. All styling lives in panel.css.
+ * @returns {string}
+ */
+function getPanelHTML() {
+  return `
+    <div class="sp-header" id="sp-header" style="justify-content: flex-end;">
+      <div class="sp-header-actions">
+        <button class="sp-header-btn" id="sp-close-btn" title="Close (Esc)">✕</button>
       </div>
     </div>
-    <div id="sp-settings-menu" style="display:none; position:absolute; top:44px; right:14px; width:260px; border:1px solid #e8dccd; border-radius:14px; background:#fff; color:#2a2117; box-shadow:0 12px 30px rgba(0,0,0,0.14); padding:14px; z-index:2147483648;">
-      <div id="sp-settings-handle" style="cursor:move; user-select:none; display:flex; justify-content:space-between; align-items:center; gap:8px; margin:-14px -14px 10px; padding:10px 14px 8px; border-bottom:1px solid rgba(232,220,205,0.9); background:rgba(255,255,255,0.95); border-top-left-radius:14px; border-top-right-radius:14px; position:relative; z-index:2;">
-        <span style="font-size:12px; font-weight:700; color:#5a4a3f;">Settings</span>
-        <span style="font-size:12px; color:#5a4a3f;">⇅</span>
-      </div>
-      <div style="font-size:12px; font-weight:700; margin-bottom:10px;">View mode</div>
-      <label style="display:flex; justify-content:space-between; align-items:center; gap:12px; background:#f6f3ef; border-radius:12px; padding:10px; cursor:pointer;">
-        <span style="font-size:12px; color:#5a4a3f;">Advanced</span>
-        <input id="sp-mode-toggle" type="checkbox" checked style="width:40px; height:20px; accent-color:#b63e2e; cursor:pointer;" />
-        <span style="font-size:12px; color:#5a4a3f;">Simple</span>
-      </label>
-      <div style="font-size:11px; color:#5a4a3f; margin-top:10px;">Advanced enables full media controls and custom sizing. Simple switches to thin mode with no media controls.</div>
-      <div style="margin-top:16px;">
-        <div style="font-size:12px; font-weight:700; margin-bottom:10px;">Audio</div>
-        <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
-          <label style="font-size:12px; color:#5a4a3f; min-width:50px;">Speed</label>
-          <input id="sp-speed" type="range" min="0.2" max="1.0" step="0.1" value="1.0" style="flex:1;" />
-          <span id="sp-speed-value" style="font-size:12px; color:#5a4a3f; min-width:36px; text-align:right;">1.0×</span>
-        </div>
-        <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
-          <label style="font-size:12px; color:#5a4a3f; min-width:50px;">Volume</label>
-          <input id="sp-volume" type="range" min="0" max="100" step="1" value="100" style="flex:1;" />
-          <span id="sp-volume-value" style="font-size:12px; color:#5a4a3f; min-width:36px; text-align:right;">100%</span>
-        </div>
-        <div style="display:flex; align-items:center; gap:10px;">
-          <label style="font-size:12px; color:#5a4a3f; min-width:50px;">Smoothness</label>
-          <input id="sp-smoothness" type="range" min="1" max="20" step="1" value="10" style="flex:1;" />
-          <span id="sp-smoothness-value" style="font-size:12px; color:#5a4a3f; min-width:36px; text-align:right;">10</span>
-        </div>
-      </div>
-    </div>
-    <div id="sp-body" style="display:flex; flex-direction:column; gap:10px; overflow:hidden;">
-      <textarea id="sp-input" placeholder="Enter Spanish text here" style="width:100%; min-height:108px; max-height:calc(100vh - 320px); border:1px solid #e8dccd; border-radius:16px; padding:12px; resize:vertical; font-size:14px; line-height:1.6; background:#fff; box-sizing:border-box; overflow:auto;"></textarea>
-      <div id="sp-controls" style="display:grid; gap:10px;">
-        <div id="sp-progress-wrapper" style="display:flex; flex-direction:column; gap:6px;">
-          <div style="display:flex; align-items:center; gap:8px;">
-            <button id="sp-playtoggle-btn" style="width:34px; height:34px; border:none; border-radius:50%; background:#b63e2e; color:#fff; font-size:16px; cursor:pointer;">►</button>
-            <div id="sp-progress-bar" style="position:relative; flex:1; height:10px; border-radius:999px; background:#e8dccd; cursor:pointer; overflow:hidden;">
-              <div id="sp-progress-segments" style="position:absolute; inset:0; display:grid; grid-template-columns:repeat(10, 1fr); pointer-events:none; z-index:1;"></div>
-              <div id="sp-progress-fill" style="position:absolute; left:0; top:0; height:100%; width:0%; background:#b63e2e; transition:width 0.1s linear; z-index:2;"></div>
-              <div id="sp-progress-dot" style="position:absolute; top:50%; left:0%; width:14px; height:14px; border-radius:50%; background:#fff; border:2px solid #b63e2e; transform:translate(-50%, -50%); pointer-events:none; z-index:3;"></div>
-            </div>
-            <span id="sp-progress-time" style="font-size:12px; color:#5a4a3f; min-width:72px; text-align:right;">0:00 / 0:00</span>
+
+    <div class="sp-body" id="sp-body">
+      <div class="sp-input-label">Spanish · Source</div>
+      <div class="sp-input" id="sp-input" data-placeholder="Highlight text on the page to translate…"></div>
+      <div class="sp-controls">
+        <button class="sp-play-btn" id="sp-playtoggle-btn" disabled title="Play / Pause" data-state="play">${ICON_PLAY}</button>
+        <div class="sp-progress-bar" id="sp-progress-bar">
+          <div class="sp-progress-track">
+            <div class="sp-progress-segments" id="sp-progress-segments"></div>
+            <div class="sp-progress-fill" id="sp-progress-fill"></div>
           </div>
+          <div class="sp-progress-dot" id="sp-progress-dot"></div>
+        </div>
+        <span class="sp-progress-time" id="sp-progress-time">0:00 / 0:00</span>
+      </div>
+    </div>
+
+    <div class="sp-status" id="sp-status">
+      <span class="sp-status-dot"></span>
+      <span class="sp-status-text"></span>
+    </div>
+
+    <div class="sp-footer">
+      <div class="sp-footer-header">
+        <span class="sp-footer-label">English</span>
+        <div class="sp-footer-actions">
+          <button class="sp-footer-btn" id="sp-blur-btn">👁 Unblur</button>
         </div>
       </div>
-    </div>
-    <div id="sp-footer" style="position:absolute; left:0; right:0; bottom:0; border-radius:0 0 18px 18px; background:#b63e2e; color:#fff; padding:16px 18px 20px; box-sizing:border-box;">
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
-        <div style="font-size:11px; letter-spacing:0.24em; text-transform:uppercase; opacity:0.85;">English</div>
-        <button id="sp-blur-btn" style="border:none; background:rgba(255,255,255,0.18); color:#fff; border-radius:999px; padding:6px 12px; cursor:pointer; font-size:12px;">Blur</button>
+      <div class="sp-output sp-blurred" id="sp-output"></div>
+      <div class="sp-show-more" id="sp-show-more" style="display: none;">
+        <div class="sp-show-more-line"></div>
       </div>
-      <div id="sp-output" style="margin-top:8px; font-size:14px; line-height:1.6; white-space:pre-wrap; word-break:break-word; max-height:120px; overflow:auto;"></div>
     </div>
-    <div id="sp-status" style="font-size:12px; color:#8d3a2b; margin-top:10px; min-height:18px;"></div>
   `;
+}
 
-  document.body.appendChild(panel);
+/* ============================================================
+   Panel Creation & Shadow DOM
+   ============================================================ */
 
-  panel.querySelector("#sp-close-btn")?.addEventListener("click", () => {
-    panel?.remove();
-  });
-
-  const settingsBtn = panel.querySelector("#sp-settings-btn");
-  const settingsMenu = panel.querySelector("#sp-settings-menu");
-  const settingsHandle = panel.querySelector("#sp-settings-handle");
-  const modeToggle = panel.querySelector("#sp-mode-toggle");
-  const controlsSection = panel.querySelector("#sp-controls");
-  const blurBtn = panel.querySelector("#sp-blur-btn");
-
-  function applyMode(mode) {
-    if (mode === "simple") {
-      panel.style.width = WINDOW_SIZE_PRESETS.thin.width;
-      panel.style.height = WINDOW_SIZE_PRESETS.thin.height;
-      panel.style.resize = "none";
-      if (controlsSection) controlsSection.style.display = "none";
-      if (blurBtn) blurBtn.style.display = "none";
-    } else {
-      panel.style.width = "min(500px, calc(100vw - 24px))";
-      panel.style.height = "auto";
-      panel.style.resize = "both";
-      if (controlsSection) controlsSection.style.display = "grid";
-      if (blurBtn) blurBtn.style.display = "inline-flex";
-    }
+/**
+ * Creates the panel (if it doesn't exist) inside a Shadow DOM host
+ * to isolate styles from the host page. Returns the panel element
+ * inside the shadow root.
+ * @returns {HTMLDivElement} The .sp-panel element.
+ */
+function ensurePanel() {
+  let host = document.getElementById(HOST_ID);
+  if (host && host.shadowRoot) {
+    const existing = host.shadowRoot.getElementById(PANEL_ID);
+    if (existing) return existing;
   }
 
-  applyMode("advanced");
+  // Create shadow host
+  host = document.createElement("div");
+  host.id = HOST_ID;
+  host.style.position = "absolute";
+  host.style.top = "0";
+  host.style.left = "0";
+  host.style.width = "0";
+  host.style.height = "0";
+  host.style.overflow = "visible";
+  host.style.zIndex = "2147483647";
+  document.body.appendChild(host);
 
-  modeToggle?.addEventListener("change", () => {
-    applyMode(modeToggle.checked ? "advanced" : "simple");
-  });
+  shadowRoot = host.attachShadow({ mode: "open" });
 
-  settingsBtn?.addEventListener("click", (event) => {
-    event.stopPropagation();
-    if (!settingsMenu) return;
-    settingsMenu.style.display = settingsMenu.style.display === "none" ? "block" : "none";
-  });
+  // Inject stylesheet
+  const cssURL = chrome.runtime.getURL("panel.css");
+  const linkEl = document.createElement("link");
+  linkEl.rel = "stylesheet";
+  linkEl.href = cssURL;
+  shadowRoot.appendChild(linkEl);
 
-  if (settingsHandle && settingsMenu) {
-    let settingsDragActive = false;
-    let settingsStartX = 0;
-    let settingsStartY = 0;
-    let menuStartLeft = 0;
-    let menuStartTop = 0;
+  // Create panel
+  const panel = document.createElement("div");
+  panel.id = PANEL_ID;
+  panel.className = "sp-panel";
+  panel.dataset.autoSpeak = "false";
+  panel.setAttribute("tabindex", "-1");
+  panel.innerHTML = getPanelHTML();
+  shadowRoot.appendChild(panel);
+  
+  applyThemeColorToPanel();
 
-    settingsHandle.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      if (!settingsMenu) return;
-      settingsDragActive = true;
-      settingsMenu.setPointerCapture(event.pointerId);
-      const rect = settingsMenu.getBoundingClientRect();
-      menuStartLeft = rect.left;
-      menuStartTop = rect.top;
-      settingsStartX = event.clientX;
-      settingsStartY = event.clientY;
+  // ── Wire up event listeners ─────────────────────────────
 
-      const onMove = (moveEvent) => {
-        if (!settingsDragActive || !settingsMenu) return;
-        const deltaX = moveEvent.clientX - settingsStartX;
-        const deltaY = moveEvent.clientY - settingsStartY;
-        settingsMenu.style.left = `${Math.max(8, Math.min(window.innerWidth - settingsMenu.offsetWidth - 8, menuStartLeft + deltaX))}px`;
-        settingsMenu.style.top = `${Math.max(8, Math.min(window.innerHeight - settingsMenu.offsetHeight - 8, menuStartTop + deltaY))}px`;
-        settingsMenu.style.right = "auto";
-      };
+  const $ = (sel) => panel.querySelector(sel);
 
-      const onUp = () => {
-        settingsDragActive = false;
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
-      };
+  // Close button
+  $("#sp-close-btn")?.addEventListener("click", () => closePanel());
 
-      window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp);
-    });
-  }
-
-  document.addEventListener("click", (event) => {
-    if (!settingsMenu || event.target instanceof Node && settingsMenu.contains(event.target)) return;
-    if (settingsMenu.style.display === "block") {
-      settingsMenu.style.display = "none";
-    }
-  });
-
-  const header = panel.querySelector("#sp-header");
-  header?.addEventListener("pointerdown", (event) => {
-    const target = event.target;
-    if (target instanceof HTMLElement && target.closest("button,select,textarea,label")) {
-      return;
-    }
+  // Panel drag via header
+  const header = $("#sp-header");
+  header?.addEventListener("pointerdown", (e) => {
+    if (e.target.closest("button")) return;
 
     const rect = panel.getBoundingClientRect();
-    const startOffsetX = event.clientX - rect.left;
-    const startOffsetY = event.clientY - rect.top;
+    const offsetX = e.clientX - rect.left;
+    const offsetY = e.clientY - rect.top;
 
-    const onMove = (moveEvent) => {
+    const onMove = (ev) => {
       const maxLeft = window.scrollX + window.innerWidth - panel.offsetWidth - 8;
       const maxTop = window.scrollY + window.innerHeight - panel.offsetHeight - 8;
-      const left = Math.max(window.scrollX + 8, Math.min(moveEvent.clientX + window.scrollX - startOffsetX, maxLeft));
-      const top = Math.max(window.scrollY + 8, Math.min(moveEvent.clientY + window.scrollY - startOffsetY, maxTop));
-
-      panel.style.left = `${left}px`;
-      panel.style.top = `${top}px`;
+      panel.style.left = `${Math.max(window.scrollX + 8, Math.min(ev.clientX + window.scrollX - offsetX, maxLeft))}px`;
+      panel.style.top = `${Math.max(window.scrollY + 8, Math.min(ev.clientY + window.scrollY - offsetY, maxTop))}px`;
     };
 
     const onUp = () => {
@@ -358,28 +619,60 @@ function ensurePanel() {
     window.addEventListener("pointerup", onUp);
   });
 
-  const input = panel.querySelector("#sp-input");
-  input.addEventListener("input", () => translateNow(panel));
+  // Show more toggle
+  const showMoreBtn = $("#sp-show-more");
+  showMoreBtn?.addEventListener("click", () => {
+    const output = $("#sp-output");
+    if (output) {
+      output.classList.add("sp-expanded");
+      showMoreBtn.style.display = "none";
+    }
+  });
 
-  playToggleBtn = panel.querySelector("#sp-playtoggle-btn");
-  progressBar = panel.querySelector("#sp-progress-bar");
-  progressSegments = panel.querySelector("#sp-progress-segments");
-  progressFill = panel.querySelector("#sp-progress-fill");
-  progressDot = panel.querySelector("#sp-progress-dot");
-  progressTime = panel.querySelector("#sp-progress-time");
-  speedInput = panel.querySelector("#sp-speed");
-  speedValue = panel.querySelector("#sp-speed-value");
-  volumeInput = panel.querySelector("#sp-volume");
-  volumeValue = panel.querySelector("#sp-volume-value");
-  smoothnessInput = panel.querySelector("#sp-smoothness");
-  smoothnessValue = panel.querySelector("#sp-smoothness-value");
-  output = panel.querySelector("#sp-output");
+  // Cache DOM refs
+  const input = $("#sp-input");
+  playToggleBtn = $("#sp-playtoggle-btn");
 
+  // Word click listener for individual TTS
+  input?.addEventListener("click", (e) => {
+    const target = e.target;
+    if (target.classList.contains("sp-word")) {
+      // Highlight word
+      const allWords = input.querySelectorAll(".sp-word");
+      allWords.forEach(w => w.classList.remove("sp-highlighted"));
+      target.classList.add("sp-highlighted");
+
+      // Speak just this word without affecting main progress
+      if (typeof window.speechSynthesis !== "undefined") {
+        const utterance = new SpeechSynthesisUtterance(target.textContent);
+        utterance.lang = "es-ES";
+        const spanishVoice = getSpanishVoice();
+        if (spanishVoice) utterance.voice = spanishVoice;
+        utterance.rate = currentSpeechRate;
+        utterance.volume = currentVolume;
+        
+        utterance.onend = () => {
+          target.classList.remove("sp-highlighted");
+        };
+        window.speechSynthesis.speak(utterance);
+      }
+    }
+  });
+  progressBar = $("#sp-progress-bar");
+  progressSegments = $("#sp-progress-segments");
+  progressFill = $("#sp-progress-fill");
+  progressDot = $("#sp-progress-dot");
+  progressTime = $("#sp-progress-time");
+  outputEl = $("#sp-output");
+
+  const blurBtn = $("#sp-blur-btn");
+
+  // Progress bar interaction — click + drag to seek
   let progressDragActive = false;
 
-  const progressDragMove = (event) => {
+  const progressDragMove = (ev) => {
     if (!progressDragActive) return;
-    seekProgress(event);
+    seekProgress(ev);
   };
 
   const progressDragEnd = () => {
@@ -389,137 +682,194 @@ function ensurePanel() {
   };
 
   progressBar?.addEventListener("click", seekProgress);
-  progressBar?.addEventListener("pointerdown", (event) => {
-    if (event.pressure === 0) return;
-    event.preventDefault();
-    seekProgress(event);
+  progressBar?.addEventListener("pointerdown", (e) => {
+    if (e.pressure === 0) return;
+    e.preventDefault();
+    seekProgress(e);
     progressDragActive = true;
     window.addEventListener("pointermove", progressDragMove);
     window.addEventListener("pointerup", progressDragEnd);
   });
 
+  // Play / Pause
   playToggleBtn?.addEventListener("click", () => {
     if (typeof window.speechSynthesis === "undefined") return;
-    if (window.speechSynthesis.speaking) {
+
+    // If button shows Pause, stop playback
+    if (playToggleBtn.dataset.state === "pause") {
       refreshProgressPosition();
       window.speechSynthesis.cancel();
       stopProgressTimer();
-      playToggleBtn.textContent = "►";
+      setPlayState(playToggleBtn, "play");
       progressBarActive = false;
+      if (progressDot) progressDot.classList.remove("sp-active");
       return;
     }
 
-    const text = input?.value.trim() || "";
+    // Otherwise, we want to play
+    const text = input?.textContent.trim() || "";
     if (!text) return;
-    speakText(text, currentSpeechCharIndex);
-    playToggleBtn.textContent = "❚❚";
-  });
-
-  speedInput?.addEventListener("input", () => {
-    currentSpeechRate = Math.min(1.0, Math.max(0.2, Number(speedInput.value)));
-    if (speedValue) speedValue.textContent = `${currentSpeechRate.toFixed(1)}×`;
-    if (typeof window.speechSynthesis !== "undefined" && window.speechSynthesis.speaking) {
-      const text = input?.value.trim() || "";
-      window.speechSynthesis.cancel();
-      speakText(text, currentSpeechCharIndex);
+    
+    // Always clear any buggy stalled speech
+    window.speechSynthesis.cancel();
+    
+    if (currentSpeechCharIndex >= text.length || playToggleBtn.dataset.state === "replay") {
+      currentSpeechCharIndex = 0;
     }
+    
+    speakText(text, currentSpeechCharIndex);
+    setPlayState(playToggleBtn, "pause");
   });
-
-  volumeInput?.addEventListener("input", () => {
-    const rawVolume = Number(volumeInput.value);
-    currentVolume = Math.min(1, Math.max(0, rawVolume / 100));
-    if (volumeValue) volumeValue.textContent = `${Math.round(rawVolume)}%`;
-  });
-
-  smoothnessInput?.addEventListener("input", () => {
-    currentProgressSmoothness = Math.min(20, Math.max(1, Number(smoothnessInput.value)));
-    if (smoothnessValue) smoothnessValue.textContent = `${currentProgressSmoothness}`;
-    rebuildProgressSegments(currentProgressSmoothness);
-  });
-
   rebuildProgressSegments(currentProgressSmoothness);
 
+  // Blur toggle
   blurBtn?.addEventListener("click", () => {
     blurEnabled = !blurEnabled;
-    if (output) {
-      output.style.filter = blurEnabled ? "blur(6px)" : "none";
-    }
-    blurBtn.textContent = blurEnabled ? "Unblur" : "Blur";
+    if (outputEl) outputEl.classList.toggle("sp-blurred", blurEnabled);
+    if (blurBtn) blurBtn.textContent = blurEnabled ? "👁 Unblur" : "👁 Blur";
   });
+
+
+
+  // Focus the panel for keyboard events
+  panel.focus();
+
+  // Track dimensions dynamically
+  const dimensionsValue = $("#sp-dimensions-value");
+  if (dimensionsValue) {
+    const resizeObserver = new ResizeObserver(() => {
+      dimensionsValue.textContent = `${panel.offsetWidth} × ${panel.offsetHeight}`;
+    });
+    resizeObserver.observe(panel);
+  }
 
   return panel;
 }
 
+/* ============================================================
+   Panel Helpers
+   ============================================================ */
+
+/**
+ * Sets the source text in the panel input.
+ * @param {HTMLDivElement} panel
+ * @param {string} text
+ */
 function setPanelText(panel, text) {
   const input = panel.querySelector("#sp-input");
-  input.value = text;
-}
-
-function setPanelStatus(panel, message) {
-  const status = panel.querySelector("#sp-status");
-  status.textContent = message;
-}
-
-function speakText(text, startIndex = 0) {
-  if (!text || typeof window.speechSynthesis === "undefined") {
-    return;
+  if (input) {
+    input.innerHTML = "";
+    if (text) {
+      let currentIndex = 0;
+      const tokens = text.split(/(\s+)/);
+      tokens.forEach(token => {
+        if (/\S/.test(token)) {
+          const span = document.createElement("span");
+          span.className = "sp-word";
+          span.dataset.start = currentIndex;
+          span.dataset.end = currentIndex + token.length;
+          span.textContent = token;
+          input.appendChild(span);
+        } else {
+          input.appendChild(document.createTextNode(token));
+        }
+        currentIndex += token.length;
+      });
+      
+      const predictLine = document.createElement("div");
+      predictLine.id = "sp-predict-line";
+      predictLine.className = "sp-predict-line";
+      input.appendChild(predictLine);
+    }
   }
 
-  currentSpeechText = text;
-  currentSpeechCharIndex = Math.min(text.length, Math.max(0, startIndex));
-  currentSpeechDuration = Math.max(1, text.length / 15);
-  currentSpeechStartTime = Date.now() - (currentSpeechDuration * (currentSpeechCharIndex / Math.max(1, text.length)) * 1000);
+  // Preload time estimation for UI
+  currentSpeechText = text || "";
+  currentSpeechCharIndex = 0;
+  if (currentSpeechText) {
+    currentSpeechDuration = Math.max(1, currentSpeechText.length / 15);
+  } else {
+    currentSpeechDuration = 0;
+  }
   updateProgressDisplay();
 
-  if (currentUtterance) {
+  // Enable/disable play button based on content
+  if (playToggleBtn) playToggleBtn.disabled = !text.trim();
+}
+
+/**
+ * Displays a status message below the audio controls.
+ * @param {HTMLDivElement} panel
+ * @param {string} message
+ */
+function setPanelStatus(panel, message) {
+  const statusEl = panel.querySelector("#sp-status");
+  const textEl = statusEl?.querySelector(".sp-status-text");
+
+  if (textEl) textEl.textContent = message;
+  if (statusEl) {
+    statusEl.classList.toggle("sp-active", !!message);
+  }
+}
+
+/**
+ * Closes and removes the panel, stopping any active speech.
+ */
+function closePanel() {
+  if (typeof window.speechSynthesis !== "undefined" && window.speechSynthesis.speaking) {
     window.speechSynthesis.cancel();
   }
   stopProgressTimer();
+  resetProgress("");
 
-  // Keep currentSpeechStartTime aligned with the resume position so the progress pin does not jump.
-  currentSpeechStartTime = Date.now() - (currentSpeechDuration * (currentSpeechCharIndex / Math.max(1, text.length)) * 1000);
+  const host = document.getElementById(HOST_ID);
+  if (host) host.remove();
 
-  const utterance = new SpeechSynthesisUtterance(text.slice(currentSpeechCharIndex));
-  utterance.lang = "es-ES";
-  const spanishVoice = getSpanishVoice();
-  if (spanishVoice) {
-    utterance.voice = spanishVoice;
-  }
-  utterance.rate = currentSpeechRate;
-  utterance.volume = currentVolume;
-  utterance.onend = () => {
-    currentUtterance = null;
-    stopProgressTimer();
-    progressBarActive = false;
-    currentSpeechCharIndex = currentSpeechText.length;
-    updateProgressDisplay();
-  };
-  currentUtterance = utterance;
-  progressBarActive = true;
-  window.speechSynthesis.speak(utterance);
-  startProgressTimer();
+  // Clear cached refs
+  shadowRoot = null;
+  playToggleBtn = null;
+  progressBar = null;
+  progressSegments = null;
+  progressFill = null;
+  progressDot = null;
+  progressTime = null;
+  speedInput = null;
+  speedValue = null;
+  volumeInput = null;
+  volumeValue = null;
+  smoothnessInput = null;
+  smoothnessValue = null;
+  outputEl = null;
 }
 
+/* ============================================================
+   Translation
+   ============================================================ */
+
+/**
+ * Sends the panel's source text to the background script for
+ * translation and displays the result.
+ * @param {HTMLDivElement} panel
+ */
 function translateNow(panel) {
   const source = "es";
   const target = "en";
-  const input = panel.querySelector("#sp-input").value.trim();
+  const input = panel.querySelector("#sp-input")?.textContent.trim() || "";
   const output = panel.querySelector("#sp-output");
 
   if (!input) {
-    output.textContent = "";
+    if (output) output.textContent = "";
     setPanelStatus(panel, "");
     return;
   }
 
-  setPanelStatus(panel, "Translating...");
+  // Reset playback when new text is loaded
+  resetProgress(input);
+
+  setPanelStatus(panel, "Translating…");
+
   chrome.runtime.sendMessage(
-    {
-      type: "translate_text",
-      text: input,
-      source,
-      target,
-    },
+    { type: "translate_text", text: input, source, target },
     (response) => {
       if (chrome.runtime.lastError) {
         setPanelStatus(panel, "Translation failed.");
@@ -531,8 +881,27 @@ function translateNow(panel) {
         return;
       }
 
-      output.textContent = response.translatedText || "";
+      if (output) {
+        output.textContent = response.translatedText || "";
+        output.classList.remove("sp-expanded"); // Reset expansion state
+        
+        // Wait for render to check overflow
+        requestAnimationFrame(() => {
+          const showMoreContainer = panel.querySelector("#sp-show-more");
+          if (showMoreContainer) {
+            // Check if scrollHeight is significantly larger than clientHeight
+            if (output.scrollHeight > output.clientHeight + 2) {
+              showMoreContainer.style.display = "flex";
+            } else {
+              showMoreContainer.style.display = "none";
+            }
+          }
+        });
+      }
       setPanelStatus(panel, "");
+
+      // Enable play button now that we have text
+      if (playToggleBtn) playToggleBtn.disabled = !input;
 
       if (panel.dataset.autoSpeak === "true") {
         speakText(input);
@@ -542,9 +911,18 @@ function translateNow(panel) {
   );
 }
 
+/* ============================================================
+   Public Entry Point
+   ============================================================ */
+
+/**
+ * Opens (or re-uses) the translation panel, positions it near the
+ * current selection, and kicks off a translation.
+ * @param {string} initialText Spanish text to translate.
+ */
 function openTranslatePanel(initialText) {
   const panel = ensurePanel();
-  panel.dataset.autoSpeak = "true";
+  panel.dataset.autoSpeak = currentAutoPlay ? "true" : "false";
   const anchor = getSelectionAnchor();
   panel.style.left = `${anchor.x}px`;
   panel.style.top = `${anchor.y}px`;
@@ -552,12 +930,47 @@ function openTranslatePanel(initialText) {
   translateNow(panel);
 }
 
-chrome.runtime.onMessage.addListener((message) => {
-  if (message?.type !== "open_translate_box") {
-    return;
-  }
+/* ============================================================
+   Message Listener — background script sends selected text
+   ============================================================ */
 
+chrome.runtime.onMessage.addListener((message) => {
+  if (message?.type !== "open_translate_box") return;
   openTranslatePanel(message.text || "");
 });
-}
 
+/* ============================================================
+   Live Selection Listener — updates panel as user highlights
+   ============================================================ */
+
+let selectionTimeout;
+
+document.addEventListener("selectionchange", () => {
+  const host = document.getElementById(HOST_ID);
+  if (!host || !host.shadowRoot) return;
+
+  const panel = host.shadowRoot.getElementById(PANEL_ID);
+  if (!panel) return;
+
+  if (selectionTimeout) clearTimeout(selectionTimeout);
+
+  selectionTimeout = setTimeout(() => {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+
+    const selectedText = selection.toString().trim();
+    if (!selectedText) return;
+
+    // Ignore selections inside our own shadow host
+    const range = selection.getRangeAt(0);
+    if (host.contains(range.commonAncestorContainer)) return;
+
+    const input = panel.querySelector("#sp-input");
+    if (input && input.textContent !== selectedText) {
+      setPanelText(panel, selectedText);
+      translateNow(panel);
+    }
+  }, 200);
+});
+
+} // end guard

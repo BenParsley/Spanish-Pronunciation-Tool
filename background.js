@@ -26,7 +26,7 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: TRANSLATE_MENU_ID,
-      title: "Live Translation",
+      title: "🌐 Live Translation",
       contexts: ["selection"],
     });
   });

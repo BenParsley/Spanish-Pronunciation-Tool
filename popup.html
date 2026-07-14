@@ -1,17 +1,96 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Spanish Live Translation</title>
-    <link rel="stylesheet" href="popup.css" />
-  </head>
-  <body>
-    <main class="card">
-      <h1>Spanish Live Translation</h1>
-      <p class="hint">Highlight text and right-click to translate it instantly.</p>
-      <p>This extension provides live translation via the context menu.</p>
-      <p>Use the <strong>Live Translation</strong> menu item after selecting text on a page.</p>
-    </main>
-  </body>
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Spanish Live Translation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="popup.css" />
+</head>
+
+<body>
+  <main class="card">
+    <div class="card-header">
+      <span class="card-icon">🌐</span>
+      <div>
+        <h1>Spanish Translation</h1>
+        <p class="version" id="version">v5.0.0</p>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <section class="how-to">
+      <h2>How to Use</h2>
+      <ol class="steps">
+        <li>
+          <span class="step-icon">1</span>
+          <span>Highlight any <strong>Spanish text</strong> on a web page</span>
+        </li>
+        <li>
+          <span class="step-icon">2</span>
+          <span>Right-click and select <strong>Live Translation</strong></span>
+        </li>
+        <li>
+          <span class="step-icon">3</span>
+          <span>Translation appears instantly — listen with audio playback</span>
+        </li>
+      </ol>
+    </section>
+
+
+
+    <section class="audio-settings">
+      <h2>Audio Settings</h2>
+
+      <div class="setting-row">
+        <label for="autoplay-toggle" style="width: auto;">Auto-play audio instantly</label>
+        <div class="slider-container" style="justify-content: flex-end;">
+          <input type="checkbox" id="autoplay-toggle" style="appearance: auto; width: 16px; height: 16px;" checked />
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <label for="speed-slider">Speed</label>
+        <div class="slider-container">
+          <input type="range" id="speed-slider" min="0.2" max="1.0" step="0.1" value="1.0" />
+          <span id="speed-value">1.0×</span>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <label for="volume-slider">Volume</label>
+        <div class="slider-container">
+          <input type="range" id="volume-slider" min="0" max="100" step="1" value="100" />
+          <span id="volume-value">100%</span>
+        </div>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <section class="theme-settings">
+      <h2>Theme & Appearance</h2>
+
+      <div class="setting-row">
+        <label for="theme-color-picker">Accent Color</label>
+        <div class="slider-container" style="justify-content: flex-end;">
+          <input type="color" id="theme-color-picker" value="#961414"
+            style="padding: 0; width: 32px; height: 32px; border: none; border-radius: 4px; cursor: pointer;" />
+        </div>
+      </div>
+    </section>
+    <div class="divider"></div>
+
+    <p class="tip">
+      💡 The panel also updates <strong>automatically</strong> when you highlight new text while it's open.
+    </p>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+
 </html>

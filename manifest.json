@@ -1,18 +1,35 @@
 {
   "manifest_version": 3,
   "name": "Spanish Live Translation",
-  "version": "4.0.0",
-  "description": "Right-click any highlighted text to translate it live.",
-  "permissions": ["contextMenus", "scripting", "activeTab", "storage"],
-  "host_permissions": ["https://translate.googleapis.com/*"],
+  "version": "5.0.0",
+  "description": "Highlight any text and translate it live with a premium floating panel.",
+  "permissions": [
+    "contextMenus",
+    "scripting",
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://translate.googleapis.com/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["panel.css"],
+      "matches": ["<all_urls>"]
     }
   ],
   "action": {

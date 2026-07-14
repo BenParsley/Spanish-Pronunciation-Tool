@@ -1,88 +1,209 @@
+/* ============================================================
+   Popup CSS — Spanish Live Translation Extension
+   ============================================================ */
+
 :root {
-  --bg: #f7f4ee;
-  --card: #fffdf9;
-  --ink: #1f1a14;
-  --muted: #6f665b;
-  --accent: #c0392b;
-  --accent-strong: #962d22;
-  --border: #e6ddd0;
+  --bg:             #f7f4ee;
+  --surface:        #fffdf9;
+  --surface-subtle: #faf7f2;
+  --ink:            #2a2117;
+  --text-secondary: #5a4a3f;
+  --text-muted:     #8a7d72;
+  --accent:         #c0392b;
+  --accent-hover:   #a83225;
+  --border:         #e8dccd;
+  --border-subtle:  rgba(232, 220, 205, 0.6);
+  --radius-sm:      8px;
+  --radius-md:      12px;
+  --radius-lg:      16px;
+  --ease:           cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 * {
   box-sizing: border-box;
+  margin: 0;
+  padding: 0;
 }
 
 body {
-  margin: 0;
-  width: 320px;
-  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  width: 600px;
+  height: 400px;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
   color: var(--ink);
-  background: radial-gradient(circle at top right, #ffe8e4, var(--bg));
+  background: var(--surface);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
+/* ── Card ────────────────────────────────────────────────── */
 .card {
-  padding: 16px;
+  padding: 20px;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.card-icon {
+  font-size: 28px;
+  line-height: 1;
 }
 
 h1 {
-  margin: 0 0 4px;
-  font-size: 18px;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
 }
 
-.hint {
-  margin: 0 0 14px;
-  font-size: 12px;
-  color: var(--muted);
+.version {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-top: 2px;
 }
 
-.field-label {
-  display: block;
-  font-size: 12px;
-  color: var(--muted);
-  margin-bottom: 6px;
+/* ── Divider ─────────────────────────────────────────────── */
+.divider {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 16px 0;
 }
 
-.volume-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
+/* ── How-to Section ──────────────────────────────────────── */
+h2 {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.steps {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
-  align-items: center;
-  margin-bottom: 14px;
 }
 
-#volumeRange {
-  width: 100%;
-}
-
-.value {
-  min-width: 44px;
-  text-align: right;
-  font-size: 12px;
-  color: var(--accent-strong);
-  font-weight: 600;
-}
-
-.gender-group {
-  margin: 0;
-  padding: 10px;
-  border-color: var(--border);
-  border-radius: 10px;
-  background: #fff;
-}
-
-.gender-group label {
-  display: block;
+.steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   font-size: 13px;
-  margin-bottom: 6px;
+  line-height: 1.5;
+  color: var(--text-secondary);
 }
 
-.gender-group label:last-child {
-  margin-bottom: 0;
-}
-
-.status {
-  min-height: 18px;
-  margin: 10px 0 0;
+.step-icon {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   font-size: 12px;
-  color: var(--accent-strong);
+}
+
+/* ── Shortcuts ───────────────────────────────────────────── */
+.shortcuts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 24px;
+  padding: 0 8px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+/* ── Audio Settings ──────────────────────────────────────── */
+.audio-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.setting-row label {
+  width: 50px;
+}
+
+.slider-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+}
+
+input[type="range"] {
+  -webkit-appearance: none;
+  flex: 1;
+  height: 4px;
+  background: var(--border);
+  border-radius: 999px;
+  outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+
+.slider-container span {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  min-width: 36px;
+  text-align: right;
+}
+
+/* ── Tip ─────────────────────────────────────────────────── */
+.tip {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px;
 }

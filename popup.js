@@ -1,107 +1,74 @@
-const volumeRangeEl = document.getElementById("volumeRange");
-const volumeValueEl = document.getElementById("volumeValue");
-const speedRangeEl = document.getElementById("speedRange");
-const speedValueEl = document.getElementById("speedValue");
-const statusEl = document.getElementById("status");
-const genderInputs = Array.from(document.querySelectorAll('input[name="genderMode"]'));
+/**
+ * Popup Script — Spanish Live Translation Extension
+ *
+ * Displays the extension version from the manifest. The popup is an
+ * informational page showing usage instructions and keyboard shortcuts.
+ *
+ * @file popup.js
+ */
 
-const DEFAULT_SETTINGS = {
-  volume: 1,
-  genderMode: "both",
-  speedMultiplier: 1
-};
+(function initPopup() {
+  const versionEl = document.getElementById("version");
+  if (versionEl) {
+    const manifest = chrome.runtime.getManifest();
+    if (manifest?.version) {
+      versionEl.textContent = `v${manifest.version}`;
+    }
+  }
 
-const SPEED_STEPS = [
-  { slider: 0, multiplier: 0.25, label: "25%" },
-  { slider: 1, multiplier: 0.5, label: "50%" },
-  { slider: 2, multiplier: 0.75, label: "75%" },
-  { slider: 3, multiplier: 1, label: "Normal" },
-];
+  const speedSlider = document.getElementById("speed-slider");
+  const speedValue = document.getElementById("speed-value");
+  const volumeSlider = document.getElementById("volume-slider");
+  const volumeValue = document.getElementById("volume-value");
+  const autoplayToggle = document.getElementById("autoplay-toggle");
+  const themeColorPicker = document.getElementById("theme-color-picker");
 
-function sliderToMultiplier(sliderValue) {
-  const step = SPEED_STEPS.find((item) => item.slider === Number(sliderValue));
-  return step ? step.multiplier : 1;
-}
+  if (speedSlider && speedValue && volumeSlider && volumeValue) {
+    // Load initial values from storage
+    chrome.storage.local.get(["speechRate", "speechVolume", "autoPlay", "themeColor"], (res) => {
+      if (autoplayToggle) {
+        autoplayToggle.checked = res.autoPlay !== undefined ? res.autoPlay : true;
+      }
+      
+      const rate = res.speechRate !== undefined ? res.speechRate : 1.0;
+      const vol = res.speechVolume !== undefined ? res.speechVolume : 100;
+      
+      speedSlider.value = rate;
+      speedValue.textContent = `${Number(rate).toFixed(1)}×`;
+      
+      volumeSlider.value = vol;
+      volumeValue.textContent = `${Math.round(vol)}%`;
+      
+      if (themeColorPicker && res.themeColor) {
+        themeColorPicker.value = res.themeColor;
+        document.documentElement.style.setProperty("--primary", res.themeColor);
+      }
+    });
 
-function multiplierToSlider(multiplier) {
-  const step = SPEED_STEPS.find((item) => item.multiplier === Number(multiplier));
-  return step ? step.slider : 3;
-}
+    speedSlider.addEventListener("input", (e) => {
+      const val = Number(e.target.value);
+      speedValue.textContent = `${val.toFixed(1)}×`;
+      chrome.storage.local.set({ speechRate: val });
+    });
 
-function updateSpeedLabel(multiplier) {
-  const step = SPEED_STEPS.find((item) => item.multiplier === Number(multiplier));
-  speedValueEl.textContent = step ? step.label : "Normal";
-}
+    volumeSlider.addEventListener("input", (e) => {
+      const val = Number(e.target.value);
+      volumeValue.textContent = `${Math.round(val)}%`;
+      chrome.storage.local.set({ speechVolume: val });
+    });
 
-function renderStatus(message) {
-  statusEl.textContent = message;
-  setTimeout(() => {
-    statusEl.textContent = "";
-  }, 1500);
-}
-
-function updateVolumeLabel(value01) {
-  const pct = Math.round(value01 * 100);
-  volumeValueEl.textContent = `${pct}%`;
-}
-
-function getSelectedGenderMode() {
-  const selected = genderInputs.find((input) => input.checked);
-  return selected ? selected.value : "both";
-}
-
-function saveSettings() {
-  const next = {
-    volume: Number(volumeRangeEl.value) / 100,
-    genderMode: getSelectedGenderMode(),
-    speedMultiplier: sliderToMultiplier(speedRangeEl.value),
-  };
-
-  chrome.storage.sync.set(next, () => {
-    if (chrome.runtime.lastError) {
-      renderStatus("Could not save settings.");
-      return;
+    if (autoplayToggle) {
+      autoplayToggle.addEventListener("change", (e) => {
+        chrome.storage.local.set({ autoPlay: e.target.checked });
+      });
     }
 
-    updateVolumeLabel(next.volume);
-    updateSpeedLabel(next.speedMultiplier);
-    renderStatus("Saved.");
-  });
-}
-
-function loadSettings() {
-  chrome.storage.sync.get(DEFAULT_SETTINGS, (settings) => {
-    const volume = Math.max(0, Math.min(1, Number(settings.volume) || 1));
-    const speedMultiplier = [1, 0.75, 0.5, 0.25].includes(Number(settings.speedMultiplier))
-      ? Number(settings.speedMultiplier)
-      : 1;
-    const genderMode =
-      settings.genderMode === "male" || settings.genderMode === "female" || settings.genderMode === "both"
-        ? settings.genderMode
-        : "both";
-
-    volumeRangeEl.value = String(Math.round(volume * 100));
-    updateVolumeLabel(volume);
-    speedRangeEl.value = String(multiplierToSlider(speedMultiplier));
-    updateSpeedLabel(speedMultiplier);
-
-    for (const input of genderInputs) {
-      input.checked = input.value === genderMode;
+    if (themeColorPicker) {
+      themeColorPicker.addEventListener("input", (e) => {
+        const val = e.target.value;
+        document.documentElement.style.setProperty("--primary", val);
+        chrome.storage.local.set({ themeColor: val });
+      });
     }
-  });
-}
-
-volumeRangeEl.addEventListener("input", () => {
-  updateVolumeLabel(Number(volumeRangeEl.value) / 100);
-});
-speedRangeEl.addEventListener("input", () => {
-  updateSpeedLabel(sliderToMultiplier(speedRangeEl.value));
-});
-
-volumeRangeEl.addEventListener("change", saveSettings);
-speedRangeEl.addEventListener("change", saveSettings);
-for (const input of genderInputs) {
-  input.addEventListener("change", saveSettings);
-}
-
-loadSettings();
+  }
+})();
